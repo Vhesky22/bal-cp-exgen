@@ -2,6 +2,7 @@
 import sys
 import os
 import csv
+import time
 from PyQt5.QtWidgets import (QApplication, QWidget, QPushButton, QVBoxLayout, QFileDialog, QMessageBox, QListWidget, QDialogButtonBox,
                              QDialog, QLabel, QRadioButton, QButtonGroup, QHBoxLayout, QProgressBar)
 import shutil
@@ -13,6 +14,7 @@ class BatchExtractor(QWidget):
         super().__init__()
         self.initUI()
         self.files = []
+        self.start_time = None  # To store the start time of the process
 
     def initUI(self):
         self.setWindowTitle('Batch File Name Extractor')
@@ -34,6 +36,20 @@ class BatchExtractor(QWidget):
         sort_button = QPushButton('Sort by Folder', self)
         sort_button.clicked.connect(self.sort_by_folder)
         layout.addWidget(sort_button)
+
+        combine_button = QPushButton('Combine Folders',self)
+        combine_button.clicked.connect(self.combine_folders)
+        layout.addWidget(combine_button)
+
+         # Add QLabel to display the current file being processed
+        self.current_file_label = QLabel(self)
+        self.current_file_label.setVisible(False)  # Initially hidden
+        layout.addWidget(self.current_file_label)
+
+        # Add QLabel for time estimation below progress bar
+        self.time_estimation_label = QLabel(self)
+        self.time_estimation_label.setVisible(False)  # Initially hidden
+        layout.addWidget(self.time_estimation_label)
 
         # Add the progress bar
         self.progress_bar = QProgressBar(self)
@@ -187,23 +203,31 @@ class BatchExtractor(QWidget):
             return
 
         hole_id_folders = {}
-
         total_files = len(self.files)
         self.progress_bar.setMaximum(total_files)
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)  # Show the progress bar
 
+        # Show the labels for time estimation and current file
+        self.time_estimation_label.setVisible(True)
+        self.current_file_label.setVisible(True)
+
+        # Record the start time of the process
+        self.start_time = time.time()
+
         for i, file in enumerate(self.files):
             filename = os.path.basename(file)
+
+            # Update the current filename label
+            self.current_file_label.setText(f"Processing: {filename}")
+
+            # Process the file (same logic as before)
             parts = filename.split('-')
 
-            if len(parts) < 3:
-                print(f"Skipping file {filename} due to incorrect format.")
-                self.list_widget.addItem(f"Skipping file {filename} due to incorrect format.")
-                continue
+            # Skipping files with incorrect format (same as before)
 
+            # Process each file (copy or move as per logic)
             hole_id = f"{self.selected_prefix}-{parts[1]}-{parts[2].split('_')[0]}"
-
             if hole_id not in hole_id_folders:
                 dest_folder = os.path.join(folder_path, hole_id)
                 if not os.path.exists(dest_folder):
@@ -219,13 +243,170 @@ class BatchExtractor(QWidget):
             except Exception as e:
                 print(f"Failed to {'copy' if copy_files else 'move'} {filename} to {dest_folder}: {e}")
 
-            # Update progress bar
+            # Update the progress bar
             self.progress_bar.setValue(i + 1)
+
+            # Calculate elapsed time and estimate remaining time
+            elapsed_time = time.time() - self.start_time
+            average_time_per_file = elapsed_time / (i + 1)  # Average time per file
+            remaining_files = total_files - (i + 1)
+            estimated_time_left = average_time_per_file * remaining_files
+
+            # Update the time estimation label
+            self.time_estimation_label.setText(f"Estimated Time Remaining: {estimated_time_left // 60:.0f} minutes {estimated_time_left % 60:.0f} seconds")
+
             QApplication.processEvents()  # Keep the UI responsive
 
-        self.progress_bar.setVisible(False)  # Hide the progress bar when done
+        # Hide the progress bar and labels when done
+        self.progress_bar.setVisible(False)
+        self.time_estimation_label.setVisible(False)
+        self.current_file_label.setVisible(False)
         dialog.accept()
         QMessageBox.information(self, "Sorting Complete", "Files have been sorted into folders.")
+
+    
+    def combine_folders(self):
+        # Step 1: Select Whole Core Photo folder
+        wcp_folder = QFileDialog.getExistingDirectory(self, "Select Whole Core Photo Folder")
+        if not wcp_folder:
+            return
+
+        # Step 2: Select Half Core Photo folder
+        hcp_folder = QFileDialog.getExistingDirectory(self, "Select Half Core Photo Folder")
+        if not hcp_folder:
+            return
+
+        # Step 3: Select Destination folder
+        destination_folder = QFileDialog.getExistingDirectory(self, "Select Destination Folder")
+        if not destination_folder:
+            return
+
+        # Get the folder name (e.g., "WCP-24-500")
+        folder_name = os.path.basename(wcp_folder)
+
+        # Step 4: Create new folder name by replacing "WCP-" with "BLDH-"
+        new_folder_name = folder_name.replace("WCP-", "BLDH-")
+        new_folder_path = os.path.join(destination_folder, new_folder_name)
+
+        # Step 5: Create the new folder
+        os.makedirs(new_folder_path, exist_ok=True)
+
+        # Step 6: Create "WHOLE" subfolder and copy contents from Whole Core Source
+        whole_folder_path = os.path.join(new_folder_path, "WHOLE")
+        os.makedirs(whole_folder_path, exist_ok=True)
+
+        for item in os.listdir(wcp_folder):
+            src_path = os.path.join(wcp_folder, item)
+            dst_path = os.path.join(whole_folder_path, item)
+
+            # Copy item
+            try:
+                if os.path.isdir(src_path):
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            except Exception as e:
+                print(f"Error copying {src_path} to {dst_path}: {e}")
+
+        # Step 7: Create "HALF" subfolder and copy contents from Half Core Source
+        half_folder_path = os.path.join(new_folder_path, "HALF")
+        os.makedirs(half_folder_path, exist_ok=True)
+
+        for item in os.listdir(hcp_folder):
+            src_path = os.path.join(hcp_folder, item)
+            dst_path = os.path.join(half_folder_path, item)
+
+            # Copy item
+            try:
+                if os.path.isdir(src_path):
+                    shutil.copytree(src_path, dst_path)
+                else:
+                    shutil.copy2(src_path, dst_path)
+            except Exception as e:
+                print(f"Error copying {src_path} to {dst_path}: {e}")
+
+        # Inform the user
+        QMessageBox.information(self, "Success", f"Combined folders successfully into {new_folder_name}!")
+
+    def process_combination(self, whole_core_source, half_core_source, destination_folder):
+        # Get the list of WCP folders in the whole core source
+        wcp_folders = [f for f in os.listdir(whole_core_source) if f.startswith("WCP-")]
+        total_folders = len(wcp_folders)
+
+        # Set up the progress bar
+        self.progress_bar.setRange(0, total_folders)
+        self.progress_bar.setValue(0)
+        self.current_file_label.setVisible(True)
+        self.time_estimation_label.setVisible(True)
+
+        # Record the start time of the process
+        self.start_time = time.time()
+
+        for index, wcp_folder in enumerate(wcp_folders):
+            # Extract identifier from WCP folder name
+            identifier = wcp_folder[4:]  # Assuming "WCP-" is 4 characters
+
+            # Create new combined folder
+            combined_folder_name = f"BLDH-{identifier}"
+            combined_folder_path = os.path.join(destination_folder, combined_folder_name)
+
+            # Create the combined folder if it doesn't exist
+            os.makedirs(combined_folder_path, exist_ok=True)
+
+            # Create "WHOLE" subfolder inside the combined folder
+            whole_folder_path = os.path.join(combined_folder_path, "WHOLE")
+            os.makedirs(whole_folder_path, exist_ok=True)
+
+            # Combine Whole Core files into the "WHOLE" folder
+            wcp_folder_path = os.path.join(whole_core_source, wcp_folder)
+            for item in os.listdir(wcp_folder_path):
+                s = os.path.join(wcp_folder_path, item)
+                d = os.path.join(whole_folder_path, item)
+                if os.path.isdir(s):
+                    shutil.copytree(s, d, False, None)  # Copy the directory and its contents
+                else:
+                    shutil.copy2(s, d)  # Copy the file
+
+            # Create "HALF" subfolder inside the combined folder
+            half_folder_path = os.path.join(combined_folder_path, "HALF")
+            os.makedirs(half_folder_path, exist_ok=True)
+
+            # Combine Half Core files into the "HALF" folder
+            matching_hcp_folder = f"HCP-{identifier}"
+            hcp_folder_path = os.path.join(half_core_source, matching_hcp_folder)
+            if os.path.exists(hcp_folder_path):
+                for item in os.listdir(hcp_folder_path):
+                    s = os.path.join(hcp_folder_path, item)
+                    d = os.path.join(half_folder_path, item)
+                    if os.path.isdir(s):
+                        shutil.copytree(s, d, False, None)  # Copy the directory and its contents
+                    else:
+                        shutil.copy2(s, d)  # Copy the file
+
+            # Update progress bar
+            self.progress_bar.setValue(index + 1)
+
+            # Update current file processing label
+            self.current_file_label.setText(f"Processing: {combined_folder_name}")
+
+            # Estimate time remaining
+            elapsed_time = time.time() - self.start_time
+            average_time_per_folder = elapsed_time / (index + 1)  # Average time per folder
+            remaining_folders = total_folders - (index + 1)
+            estimated_time_left = average_time_per_folder * remaining_folders
+
+            # Update the time estimation label
+            self.time_estimation_label.setText(f"Estimated Time Remaining: {estimated_time_left // 60:.0f} minutes {estimated_time_left % 60:.0f} seconds")
+
+            # Keep the UI responsive
+            QApplication.processEvents()
+
+        QMessageBox.information(self, "Combine Folders", "Folders have been combined successfully.")
+        
+        # Hide progress elements after completion
+        self.progress_bar.setVisible(False)
+        self.current_file_label.setVisible(False)
+        self.time_estimation_label.setVisible(False)
 
 
 
